@@ -81,6 +81,7 @@ export async function describeRules(): Promise<ExistingRule[]> {
         protocol: p.IpProtocol ?? "-1",
         fromPort: p.FromPort ?? 0,
         toPort: p.ToPort ?? 65535,
+        description: range.Description,
       });
     }
   }

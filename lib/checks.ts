@@ -22,6 +22,7 @@ export interface ExistingRule {
   protocol: string;
   fromPort: number;
   toPort: number;
+  description?: string;
 }
 
 export interface Finding {
