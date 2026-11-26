@@ -2,6 +2,7 @@ import { createHook, FatalError, sleep } from "workflow";
 import {
   buildContextPacket,
   getAdvice,
+  type Advice,
   type AdviceResult,
   type PacketDestination,
 } from "../lib/ai";
@@ -14,10 +15,11 @@ import {
 } from "../lib/aws";
 import { runChecks, type ChangeRequest, type ExistingRule, type Finding } from "../lib/checks";
 import { getDemoProfile } from "../lib/context";
+import { writeAdviceRecord, type LedgerRequest } from "../lib/ledger";
 
-// The durable workflow. Six steps, in order: checks, AI advice, approval
-// wait, apply, sleep, remove. A blocked request stops before the wait, and a
-// refused approval never reaches AWS.
+// The durable workflow. Seven steps, in order: checks, AI advice, record
+// advice, approval wait, apply, sleep, remove. A blocked request stops
+// before the wait, and a refused approval never reaches AWS.
 
 export interface ChangeRequestInput extends SecurityGroupRule {
   requestId: string;
@@ -98,6 +100,32 @@ async function adviseRequest(
     destination: input.destination,
   });
   return getAdvice(packet);
+}
+
+// The advice record is the reviewer's copy: the request, the findings, and
+// the advice, written to the Blob ledger right after the AI step so the
+// review page can show it while the run waits for approval. Its own step so
+// a retry rewrites the record instead of calling the model again.
+async function recordAdvice(
+  input: ChangeRequestInput,
+  findings: Finding[],
+  advice: Advice,
+): Promise<void> {
+  "use step";
+
+  const request: LedgerRequest = {
+    requestId: input.requestId,
+    requesterId: input.requesterId,
+    sourceCidr: input.sourceCidr,
+    protocol: input.protocol,
+    fromPort: input.fromPort,
+    toPort: input.toPort,
+    durationMinutes: input.durationMinutes,
+    reason: input.reason,
+    destination: input.destination,
+    createdAt: new Date().toISOString(),
+  };
+  await writeAdviceRecord({ requestId: input.requestId, request, findings, advice });
 }
 
 // The refusal is a step, not an inline check, so it lands in the run history
@@ -182,6 +210,8 @@ export async function changeWorkflow(
       removed: false,
     };
   }
+
+  await recordAdvice(input, checked.findings, advice.advice);
 
   const hook = createHook<ApprovalPayload>({
     token: approvalToken(input.requestId),

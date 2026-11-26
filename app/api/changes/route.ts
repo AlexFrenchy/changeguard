@@ -5,6 +5,7 @@ import {
   type ChangeRequestInput,
 } from "@/workflows/change";
 import type { PacketDestination } from "@/lib/ai";
+import { writeRequestRecord } from "@/lib/ledger";
 import { NextResponse } from "next/server";
 
 // Start a change request: validate the shape, start the workflow, return the
@@ -107,6 +108,13 @@ export async function POST(request: Request) {
     reason: reason.trim(),
     destination: parsedDestination,
   };
+  // The request record is the review page's copy. It is written before the
+  // workflow starts, so the review page can load the request while the run
+  // is still waiting for approval.
+  await writeRequestRecord({
+    ...input,
+    createdAt: new Date().toISOString(),
+  });
   const run = await start(changeWorkflow, [input]);
   return NextResponse.json(
     {
