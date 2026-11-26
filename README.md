@@ -1,12 +1,12 @@
 # Changeguard
 
-Approval for firewall changes that expire on time, every time.
+Approval for firewall changes that expire on time. 
 
-An engineer asks for temporary access. Deterministic code checks the obvious dangers. An AI reviews the full context, who is asking, their history, the destination, and advises only. A different person approves. The rule lands in a real AWS security group, and when the window ends, it removes itself.
+An engineer asks for temporary access. Deterministic code checks the obvious dangers. An AI reviews the full context, who is asking, their history, the destination, and advises only. A different person approves. The rule lands in a AWS security group, and when the window ends, it removes itself. This workflow could apply to any Firewall vendor. 
 
 ## The boundary
 
-Vercel orchestrates. AWS enforces. Changeguard never becomes the firewall. It becomes the trustworthy path to the firewall.
+Vercel orchestrates. AWS enforces. Changeguard is trustworthy path to the firewall.
 
 ## Built on Vercel
 
@@ -67,5 +67,5 @@ Env vars (production):
 
 ## Links
 
-- Live demo: https://changeguard-flame.vercel.app
+- Live demo: https://changeguard.tokensanonymous.com
 - Public repo: https://github.com/AlexFrenchy/changeguard
