@@ -1,22 +1,30 @@
 import { createHook, FatalError, sleep } from "workflow";
 import {
+  buildContextPacket,
+  getAdvice,
+  type AdviceResult,
+  type PacketDestination,
+} from "../lib/ai";
+import {
   authorizeRule,
   describeRules,
   hasRule,
   revokeRule,
   type SecurityGroupRule,
 } from "../lib/aws";
-import { runChecks, type ChangeRequest, type Finding } from "../lib/checks";
+import { runChecks, type ChangeRequest, type ExistingRule, type Finding } from "../lib/checks";
+import { getDemoProfile } from "../lib/context";
 
-// The durable workflow. Five steps, in order: checks, approval wait, apply,
-// sleep, remove. A blocked request stops before the wait, and a refused
-// approval never reaches AWS.
+// The durable workflow. Six steps, in order: checks, AI advice, approval
+// wait, apply, sleep, remove. A blocked request stops before the wait, and a
+// refused approval never reaches AWS.
 
 export interface ChangeRequestInput extends SecurityGroupRule {
   requestId: string;
   requesterId: string;
   durationMinutes: number;
   reason: string;
+  destination?: PacketDestination;
 }
 
 export interface ApprovalPayload {
@@ -24,12 +32,13 @@ export interface ApprovalPayload {
   approved: boolean;
 }
 
-export type ChangeStatus = "blocked" | "denied" | "expired";
+export type ChangeStatus = "blocked" | "denied" | "expired" | "advice-unavailable";
 
 export interface ChangeOutcome {
   status: ChangeStatus;
   requestId: string;
   findings: Finding[];
+  advice: AdviceResult | null;
   applied: boolean;
   removed: boolean;
 }
@@ -43,6 +52,7 @@ export function approvalToken(requestId: string): string {
 async function checkRequest(input: ChangeRequestInput): Promise<{
   findings: Finding[];
   blocked: boolean;
+  existing: ExistingRule[];
 }> {
   "use step";
 
@@ -57,7 +67,37 @@ async function checkRequest(input: ChangeRequestInput): Promise<{
     reason: input.reason,
   };
   const findings = runChecks(request, existing);
-  return { findings, blocked: findings.some((f) => f.effect === "block") };
+  return {
+    findings,
+    blocked: findings.some((f) => f.effect === "block"),
+    existing,
+  };
+}
+
+// The AI step runs after the checks and before the approval wait, so the
+// reviewer sees the advice before deciding. A blocked request never reaches
+// it. If the model cannot be reached, the run stops here: fail closed.
+async function adviseRequest(
+  input: ChangeRequestInput,
+  findings: Finding[],
+  existing: ExistingRule[],
+): Promise<AdviceResult> {
+  "use step";
+
+  const packet = buildContextPacket({
+    sourceCidr: input.sourceCidr,
+    protocol: input.protocol,
+    fromPort: input.fromPort,
+    toPort: input.toPort,
+    durationMinutes: input.durationMinutes,
+    reason: input.reason,
+    requesterId: input.requesterId,
+    profile: getDemoProfile(input.requesterId),
+    findings,
+    existing,
+    destination: input.destination,
+  });
+  return getAdvice(packet);
 }
 
 // The refusal is a step, not an inline check, so it lands in the run history
@@ -125,6 +165,19 @@ export async function changeWorkflow(
       status: "blocked",
       requestId: input.requestId,
       findings: checked.findings,
+      advice: null,
+      applied: false,
+      removed: false,
+    };
+  }
+
+  const advice = await adviseRequest(input, checked.findings, checked.existing);
+  if (advice.status === "unavailable") {
+    return {
+      status: "advice-unavailable",
+      requestId: input.requestId,
+      findings: checked.findings,
+      advice,
       applied: false,
       removed: false,
     };
@@ -142,6 +195,7 @@ export async function changeWorkflow(
       status: "denied",
       requestId: input.requestId,
       findings: checked.findings,
+      advice,
       applied: false,
       removed: false,
     };
@@ -154,6 +208,7 @@ export async function changeWorkflow(
     status: "expired",
     requestId: input.requestId,
     findings: checked.findings,
+    advice,
     applied,
     removed,
   };

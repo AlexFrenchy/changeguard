@@ -4,12 +4,13 @@ import {
   changeWorkflow,
   type ChangeRequestInput,
 } from "@/workflows/change";
+import type { PacketDestination } from "@/lib/ai";
 import { NextResponse } from "next/server";
 
 // Start a change request: validate the shape, start the workflow, return the
 // run id and the resume URL. The route checks shape only; the workflow's
 // checks judge the content, so a flaggable request still reaches a human.
-const MAX_DURATION_MINUTES = 24 * 60;
+const MAX_DURATION_MINUTES = 30 * 24 * 60;
 const PROTOCOLS = ["tcp", "udp", "icmp"];
 
 function badRequest(message: string): NextResponse {
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
   if (typeof body !== "object" || body === null) {
     return badRequest("Request body must be a JSON object.");
   }
-  const { requesterId, sourceCidr, protocol, fromPort, toPort, durationMinutes, reason } =
+  const { requesterId, sourceCidr, protocol, fromPort, toPort, durationMinutes, reason, destination } =
     body as Record<string, unknown>;
 
   if (typeof requesterId !== "string" || requesterId.trim() === "") {
@@ -58,10 +59,41 @@ export async function POST(request: Request) {
     durationMinutes < 1 ||
     durationMinutes > MAX_DURATION_MINUTES
   ) {
-    return badRequest("durationMinutes must be an integer from 1 to 1440.");
+    return badRequest("durationMinutes must be an integer from 1 to 43200.");
   }
   if (typeof reason !== "string" || reason.trim() === "") {
     return badRequest("reason is required.");
+  }
+  // The destination is optional; without it the packet uses the demo test
+  // target. A window over 24 hours is not rejected here: the excessive
+  // duration check escalates it and the AI advises a shorter window, which
+  // is exactly what the 30-day eval case tests.
+  let parsedDestination: PacketDestination | undefined;
+  if (destination !== undefined) {
+    if (typeof destination !== "object" || destination === null) {
+      return badRequest("destination must be an object.");
+    }
+    const { environment, label, sensitivity } = destination as Record<
+      string,
+      unknown
+    >;
+    if (
+      typeof environment !== "string" ||
+      environment.trim() === "" ||
+      typeof label !== "string" ||
+      label.trim() === "" ||
+      typeof sensitivity !== "string" ||
+      sensitivity.trim() === ""
+    ) {
+      return badRequest(
+        "destination needs environment, label, and sensitivity strings.",
+      );
+    }
+    parsedDestination = {
+      environment: environment.trim(),
+      label: label.trim(),
+      sensitivity: sensitivity.trim(),
+    };
   }
 
   const input: ChangeRequestInput = {
@@ -73,6 +105,7 @@ export async function POST(request: Request) {
     toPort,
     durationMinutes,
     reason: reason.trim(),
+    destination: parsedDestination,
   };
   const run = await start(changeWorkflow, [input]);
   return NextResponse.json(
