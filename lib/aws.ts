@@ -55,12 +55,35 @@ function ruleId(permission: IpPermission, cidr: string): string {
   return `${protocol}:${from}-${to}:${cidr}`;
 }
 
+// AWS stores a CIDR by its network address, so 110.101.0.1/24 becomes
+// 110.101.0.0/24 on authorize. The adapter normalizes to the network
+// address first, so authorize, revoke, and the read-back all agree on the
+// same CIDR. Without this, the read-back cannot find the rule it just
+// applied and the run fails with the rule left behind. IPv6 and anything
+// that does not parse as an IPv4 CIDR pass through unchanged.
+export function normalizeCidr(cidr: string): string {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr);
+  if (!match) return cidr;
+  const octets = match.slice(1, 5).map(Number);
+  if (octets.some((o) => o > 255)) return cidr;
+  const prefix = Number(match[5]);
+  if (prefix > 32) return cidr;
+  const full = Math.floor(prefix / 8);
+  const rest = prefix % 8;
+  const out = octets.map((o, i) => {
+    if (i < full) return o;
+    if (i === full && rest > 0) return (o & (0xff << (8 - rest))) & 0xff;
+    return 0;
+  });
+  return `${out.join(".")}/${prefix}`;
+}
+
 function toIpPermission(rule: SecurityGroupRule): IpPermission {
   return {
     IpProtocol: rule.protocol,
     FromPort: rule.fromPort,
     ToPort: rule.toPort,
-    IpRanges: [{ CidrIp: rule.sourceCidr, Description: rule.description }],
+    IpRanges: [{ CidrIp: normalizeCidr(rule.sourceCidr), Description: rule.description }],
   };
 }
 
@@ -90,7 +113,7 @@ export async function describeRules(): Promise<ExistingRule[]> {
 
 function matches(rule: SecurityGroupRule, existing: ExistingRule): boolean {
   return (
-    existing.sourceCidr === rule.sourceCidr &&
+    normalizeCidr(existing.sourceCidr) === normalizeCidr(rule.sourceCidr) &&
     existing.protocol === rule.protocol &&
     existing.fromPort === rule.fromPort &&
     existing.toPort === rule.toPort

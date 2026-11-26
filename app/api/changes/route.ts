@@ -5,6 +5,7 @@ import {
   type ChangeRequestInput,
 } from "@/workflows/change";
 import type { PacketDestination } from "@/lib/ai";
+import { normalizeCidr } from "@/lib/aws";
 import { writeRequestRecord } from "@/lib/ledger";
 import { NextResponse } from "next/server";
 
@@ -100,7 +101,9 @@ export async function POST(request: Request) {
   const input: ChangeRequestInput = {
     requestId: crypto.randomUUID(),
     requesterId: requesterId.trim(),
-    sourceCidr: sourceCidr.trim(),
+    // Normalize to the network address, so the record, the checks, the
+    // workflow, and the read-back all see the CIDR AWS will store.
+    sourceCidr: normalizeCidr(sourceCidr.trim()),
     protocol: protocol.trim().toLowerCase(),
     fromPort,
     toPort,

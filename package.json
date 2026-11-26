@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test lib/checks.test.ts lib/ai.test.ts",
+    "test": "node --test lib/checks.test.ts lib/ai.test.ts lib/aws.test.ts",
     "lint": "eslint"
   },
   "dependencies": {
